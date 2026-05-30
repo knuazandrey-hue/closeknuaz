@@ -3,12 +3,14 @@ const { Telegraf, Markup } = require('telegraf');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const bot = new Telegraf(process.env.BOT_TOKEN, {
+  handlerTimeout: 600000
+});
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const userSites = {};
 
-// ─── Функция: генерация сайта через Claude ───────────────────────────────────
+// ─── Генерация сайта ──────────────────────────────────────────────────────────
 async function generateSite(description, existingHtml = null, imageBase64 = null) {
   let prompt;
 
@@ -31,54 +33,46 @@ ${imageBase64 ? '\nНа картинке — персонаж/логотип т�
 - Стеклянный эффект (glassmorphism) для карточек: backdrop-filter: blur()
 - Плавные анимации появления при скролле (Intersection Observer)
 - Параллакс эффект на hero секции
-- Кастомный курсор или анимированные элементы
+- Анимированный градиент на заголовке
 
 🏗️ СЕКЦИИ (все обязательны):
 1. НАВИГАЦИЯ — фиксированная, с blur эффектом, ссылки на секции
-2. HERO — огромный заголовок, слоган, анимированный логотип/персонаж, кнопки Buy + Telegram + Twitter, счётчик цены/холдеров
-3. ABOUT — история токена, почему он лучший, характеристики
-4. TOKENOMICS — красивая круговая диаграмма через CSS или Canvas, проценты распределения
-5. ROADMAP — красивый таймлайн с этапами Q1/Q2/Q3/Q4
-6. HOW TO BUY — пошаговая инструкция с иконками (1.Кошелёк 2.SOL 3.pump.fun 4.Swap)
-7. МИНИ-ИГРА — простой кликер: нажимаешь на логотип/персонажа и зарабатываешь токены, счётчик очков
-8. COMMUNITY — ссылки на соцсети, красивые карточки
+2. HERO — огромный заголовок, слоган, анимированный логотип, кнопки Buy + Telegram + Twitter
+3. ABOUT — история токена, почему он лучший
+4. TOKENOMICS — красивая круговая диаграмма через CSS, проценты распределения
+5. ROADMAP — красивый таймлайн Q1/Q2/Q3/Q4
+6. HOW TO BUY — пошаговая инструкция с иконками
+7. МИНИ-ИГРА — кликер: нажимаешь на персонажа и зарабатываешь токены
+8. COMMUNITY — ссылки на соцсети
 9. FOOTER — копирайт, дисклеймер
 
 ⚡ АНИМАЦИИ (все обязательны):
 - Печатающийся текст (typewriter effect) в hero
-- Счётчик который анимированно считает вверх (holders, market cap)
-- Floating анимация для логотипа (вверх-вниз)
-- Hover эффекты на всех кнопках (scale + glow)
+- Счётчик который анимированно считает вверх
+- Floating анимация для логотипа
+- Hover эффекты на кнопках (scale + glow)
 - Появление элементов при скролле (fadeInUp)
-- Анимированный градиент на фоне или заголовке
 
-🎮 МИНИ-ИГРА (кликер):
-- Большой персонаж/монета в центре
-- При клике: +1 токен, анимация "+1" улетает вверх
-- Счётчик токенов сверху
-- Уровни: каждые 100 кликов новый уровень
-- Красивые звуковые эффекты через Web Audio API (не файлы)
+🎮 МИНИ-ИГРА:
+- Большой персонаж в центре, при клике +1 токен
+- Анимация "+1" улетает вверх при клике
+- Счётчик токенов, уровни каждые 100 кликов
 
 💎 КОД:
-- Всё в одном HTML файле (CSS и JS внутри)
+- Всё в одном HTML файле
 - Никаких внешних библиотек кроме Google Fonts
-- Адаптивный дизайн (mobile-first)
-- Плавный скролл между секциями
+- Адаптивный дизайн
 - Минимум 500 строк кода
-- Реальные красивые цвета, не серые заглушки
 
 Верни ТОЛЬКО чистый HTML код. Без объяснений. Без markdown. Без \`\`\`.`;
   }
 
   let messages;
   if (imageBase64 && !existingHtml) {
-    messages = [{
-      role: 'user',
-      content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
-        { type: 'text', text: prompt }
-      ]
-    }];
+    messages = [{ role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
+      { type: 'text', text: prompt }
+    ]}];
   } else {
     messages = [{ role: 'user', content: prompt }];
   }
@@ -94,7 +88,22 @@ ${imageBase64 ? '\nНа картинке — персонаж/логотип т�
   return html;
 }
 
-// ─── Функция: скачать фото из Telegram ───────────────────────────────────────
+// ─── Генерация описания что было сделано ─────────────────────────────────────
+async function generateDescription(description, isEdit = false, editText = '') {
+  const prompt = isEdit
+    ? `Ты — весёлый бот который только что обновил сайт мем-токена. Изменение которое попросили: "${editText}". Напиши короткое сообщение (3-5 предложений) в неформальном стиле — что именно ты изменил, что добавил, как это выглядит. Без лишних слов, живо и с характером. Можно использовать эмодзи.`
+    : `Ты — весёлый бот который только что сделал сайт мем-токена. Описание токена: "${description}". Напиши короткое сообщение (4-6 предложений) в неформальном стиле — придумай имя токену если не указано, расскажи что ты сделал на сайте, какие секции добавил, какая игра, какой дизайн. Без лишних слов, живо и с характером как будто ты реальный чел. Можно использовать эмодзи.`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 300,
+    messages: [{ role: 'user', content: prompt }]
+  });
+
+  return response.content[0].text;
+}
+
+// ─── Скачать фото из Telegram ─────────────────────────────────────────────────
 async function downloadPhoto(ctx, fileId) {
   const file = await ctx.telegram.getFile(fileId);
   const url = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
@@ -102,7 +111,7 @@ async function downloadPhoto(ctx, fileId) {
   return Buffer.from(response.data).toString('base64');
 }
 
-// ─── Функция: деплой на GitHub Pages ─────────────────────────────────────────
+// ─── Деплой на GitHub Pages ───────────────────────────────────────────────────
 async function deployToGitHub(html, repoName) {
   const headers = {
     Authorization: `token ${process.env.GITHUB_TOKEN}`,
@@ -120,26 +129,16 @@ async function deployToGitHub(html, repoName) {
     sha = fileRes.data.sha;
   } catch (e) {
     try {
-      await axios.post('https://api.github.com/user/repos', {
-        name: repoName,
-        auto_init: true,
-        private: false
-      }, { headers });
+      await axios.post('https://api.github.com/user/repos', { name: repoName, auto_init: true, private: false }, { headers });
       await new Promise(r => setTimeout(r, 2000));
-      await axios.post(
-        `https://api.github.com/repos/${username}/${repoName}/pages`,
-        { source: { branch: 'main', path: '/' } },
-        { headers }
-      );
+      await axios.post(`https://api.github.com/repos/${username}/${repoName}/pages`, { source: { branch: 'main', path: '/' } }, { headers });
     } catch (err) {}
   }
 
   const content = Buffer.from(html).toString('base64');
-  const body = { message: 'Update site', content, ...(sha && { sha }) };
-
   await axios.put(
     `https://api.github.com/repos/${username}/${repoName}/contents/index.html`,
-    body,
+    { message: 'Update site', content, ...(sha && { sha }) },
     { headers }
   );
 
@@ -148,8 +147,7 @@ async function deployToGitHub(html, repoName) {
 
 // ─── /start ───────────────────────────────────────────────────────────────────
 bot.start((ctx) => {
-  ctx.reply(
-    `👋 Зд перцы! Я бот для создания сайтов, меня зовут CloseKnuazAI!
+  ctx.reply(`👋 Зд перцы! Я бот для создания сайтов, меня зовут CloseKnuazAI!
 
 Чо я могу крч рассказываю:
 🌐 /create — создать сайт
@@ -157,25 +155,22 @@ bot.start((ctx) => {
 📥 /download — скачать HTML файл
 ❓ /help — расскажу чд могу поподробнее
 
-Крч жми /create чтобы начать!`
-  );
+Крч жми /create чтобы начать!`);
 });
 
 // ─── /help ────────────────────────────────────────────────────────────────────
 bot.help((ctx) => {
-  ctx.reply(
-    `📖 Как пользоваться:
+  ctx.reply(`📖 Как пользоваться:
 
 /create [описание] — создать сайт текстом
 Пример: /create токен GOVNO, желтый слон, tg @mytoken, twitter @mytoken
 
-Или отправь 🖼 картинку с описанием — сделаю сайт с твоим персонажем!
+Или отправь 🖼 картинку с описанием в подписи!
 
 /edit [что изменить] — изменить сайт
-Пример: /edit сделай фон чёрным и добавь раздел FAQ
+Пример: /edit добавь счётчик холдеров и измени цвет на зелёный
 
-/download — получить HTML файл сайта`
-  );
+/download — получить HTML файл сайта`);
 });
 
 // ─── /create ──────────────────────────────────────────────────────────────────
@@ -183,10 +178,10 @@ bot.command('create', async (ctx) => {
   const description = ctx.message.text.replace('/create', '').trim();
 
   if (!description) {
-    return ctx.reply('✍️ Напиши описание токена после команды!\n\nПример:\n/create токен DOGE, собака шиба-ину, tg @doge, twitter @doge\n\nИли просто отправь картинку с описанием!');
+    return ctx.reply('✍️ Напиши описание токена!\n\nПример:\n/create токен PEPE, зелёная лягушка, tg @pepe, twitter @pepe\n\nИли отправь картинку с подписью!');
   }
 
-  const msg = await ctx.reply('⏳ Ебашу сайт... это займёт 1-2 минуты, делаю качественно!');
+  const msg = await ctx.reply('⏳ Погнали, делаю сайт... займёт минуту-две, не гони 🔥');
 
   try {
     const html = await generateSite(description);
@@ -194,17 +189,24 @@ bot.command('create', async (ctx) => {
     const repoName = `token-${userId}`;
     userSites[userId] = { html, repoName };
 
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Деплою на GitHub...');
-    const url = await deployToGitHub(html, repoName);
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📝 Пишу что сделал...');
+    const summary = await generateDescription(description);
 
-    await ctx.telegram.editMessageText(
-      ctx.chat.id, msg.message_id, null,
-      `✅ Сайт готов!\n\n🔗 ${url}\n\n⚠️ Первый раз GitHub Pages активируется 2-5 минут.`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('✏️ Редактировать', 'edit_prompt')],
-        [Markup.button.callback('📥 Скачать HTML', 'download_html')]
-      ])
-    );
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Деплою...');
+    await deployToGitHub(html, repoName);
+
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+
+    await ctx.reply(summary, Markup.inlineKeyboard([
+      [Markup.button.callback('✏️ Редактировать', 'edit_prompt')],
+      [Markup.button.callback('📥 Скачать HTML', 'download_html')]
+    ]));
+
+    await ctx.replyWithDocument({
+      source: Buffer.from(html),
+      filename: 'index.html'
+    }, { caption: '☝️ Вот твой сайт, открывай в браузере или деплой куда хочешь!' });
+
   } catch (err) {
     console.error(err);
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`);
@@ -217,10 +219,10 @@ bot.on('photo', async (ctx) => {
   const caption = ctx.message.caption || '';
 
   if (!caption) {
-    return ctx.reply('✍️ Добавь описание к картинке!\n\nОтправь фото и напиши подпись:\nнапример: токен BUNNY, tg @bunny, twitter @bunny');
+    return ctx.reply('✍️ Добавь описание к картинке!\n\nОтправь фото и в подписи напиши:\nнапример: токен BUNNY, tg @bunny, twitter @bunny');
   }
 
-  const msg = await ctx.reply('⏳ Вижу картинку! Делаю крутой сайт с твоим персонажем... 1-2 минуты!');
+  const msg = await ctx.reply('⏳ О, картинка есть! Делаю сайт с твоим персонажем... минута-две 🔥');
 
   try {
     const photos = ctx.message.photo;
@@ -231,17 +233,24 @@ bot.on('photo', async (ctx) => {
     const repoName = `token-${userId}`;
     userSites[userId] = { html, repoName };
 
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Деплою на GitHub...');
-    const url = await deployToGitHub(html, repoName);
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📝 Пишу что сделал...');
+    const summary = await generateDescription(caption);
 
-    await ctx.telegram.editMessageText(
-      ctx.chat.id, msg.message_id, null,
-      `✅ Сайт с твоим персонажем готов!\n\n🔗 ${url}\n\n⚠️ Первый раз GitHub Pages активируется 2-5 минут.`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('✏️ Редактировать', 'edit_prompt')],
-        [Markup.button.callback('📥 Скачать HTML', 'download_html')]
-      ])
-    );
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Деплою...');
+    await deployToGitHub(html, repoName);
+
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+
+    await ctx.reply(summary, Markup.inlineKeyboard([
+      [Markup.button.callback('✏️ Редактировать', 'edit_prompt')],
+      [Markup.button.callback('📥 Скачать HTML', 'download_html')]
+    ]));
+
+    await ctx.replyWithDocument({
+      source: Buffer.from(html),
+      filename: 'index.html'
+    }, { caption: '☝️ Вот твой сайт с персонажем!' });
+
   } catch (err) {
     console.error(err);
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`);
@@ -257,27 +266,34 @@ bot.command('edit', async (ctx) => {
     return ctx.reply('❌ Сначала создай сайт командой /create');
   }
   if (!editText) {
-    return ctx.reply('✍️ Напиши что изменить!\n\nПример:\n/edit добавь игру кликер с персонажем');
+    return ctx.reply('✍️ Напиши что изменить!\n\nПример:\n/edit добавь игру кликер и измени цвет на фиолетовый');
   }
 
-  const msg = await ctx.reply('⏳ Оу, фак, делаю изменения... 1-2 минуты!');
+  const msg = await ctx.reply('⏳ Ок, вношу изменения... минута 🔧');
 
   try {
     const { html: oldHtml, repoName } = userSites[userId];
     const newHtml = await generateSite(editText, oldHtml);
     userSites[userId].html = newHtml;
 
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Обновляю сайт...');
-    const url = await deployToGitHub(newHtml, repoName);
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📝 Пишу что изменил...');
+    const summary = await generateDescription('', true, editText);
 
-    await ctx.telegram.editMessageText(
-      ctx.chat.id, msg.message_id, null,
-      `✅ Сайт обновлён!\n\n🔗 ${url}\n\n(Изменения появятся через 1-2 минуты)`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('✏️ Ещё изменение', 'edit_prompt')],
-        [Markup.button.callback('📥 Скачать HTML', 'download_html')]
-      ])
-    );
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Обновляю...');
+    await deployToGitHub(newHtml, repoName);
+
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+
+    await ctx.reply(summary, Markup.inlineKeyboard([
+      [Markup.button.callback('✏️ Ещё изменение', 'edit_prompt')],
+      [Markup.button.callback('📥 Скачать HTML', 'download_html')]
+    ]));
+
+    await ctx.replyWithDocument({
+      source: Buffer.from(newHtml),
+      filename: 'index.html'
+    }, { caption: '☝️ Обновлённый сайт!' });
+
   } catch (err) {
     console.error(err);
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`);
