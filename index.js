@@ -8,9 +8,21 @@ const bot = new Telegraf(process.env.BOT_TOKEN, { handlerTimeout: 600000 });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const userSites = {};
-const userChats = {}; // История диалогов
-const userStates = {}; // Ожидание ввода
-const userLastImage = {}; // Последний промпт картинки
+const userChats = {};
+const userStates = {};
+const userLastImage = {};
+
+// ─── Игнорируем старые сообщения при перезапуске ──────────────────────────────
+bot.use(async (ctx, next) => {
+  const msgTime = ctx.message?.date || ctx.callbackQuery?.message?.date;
+  if (msgTime && (Date.now() / 1000 - msgTime) > 30) return; // игнор если >30 сек
+  return next();
+});
+
+// ─── Глобальный обработчик ошибок ─────────────────────────────────────────────
+bot.catch((err, ctx) => {
+  console.error('Bot error:', err.message);
+});
 
 // ─── Главное меню (кнопки внизу чата) ────────────────────────────────────────
 const mainMenu = Markup.keyboard([
