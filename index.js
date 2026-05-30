@@ -261,6 +261,28 @@ JS: Canvas частицы, typewriter, счётчики, кликер, copy CA
   html = html.replace(/```html/gi, '').replace(/```/g, '').trim();
   if (!html.startsWith('<!')) html = '<!DOCTYPE html>\n' + html;
   if (!html.includes('</html>')) html += '\n</body></html>';
+
+  // Инъекция скрипта который исправляет любой opacity:0 на секциях
+  const fixScript = `
+<script>
+window.addEventListener('load', function() {
+  // Принудительно показываем весь контент
+  var tags = ['section','div','header','footer','nav','main','article','h1','h2','h3','p','a','button','img'];
+  tags.forEach(function(tag) {
+    document.querySelectorAll(tag).forEach(function(el) {
+      var style = window.getComputedStyle(el);
+      if (style.opacity === '0' || style.visibility === 'hidden' || style.display === 'none') {
+        if (!el.classList.contains('particle') && !el.id.includes('particle')) {
+          el.style.opacity = '1';
+          el.style.visibility = 'visible';
+        }
+      }
+    });
+  });
+});
+</script>`;
+
+  html = html.replace('</body>', fixScript + '\n</body>');
   return html;
 }
 
