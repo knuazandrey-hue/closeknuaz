@@ -5,297 +5,350 @@ const axios = require('axios');
 
 const bot = new Telegraf(process.env.BOT_TOKEN, { handlerTimeout: 600000 });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const userSites = {};
 
-// ─── Описать персонажа ────────────────────────────────────────────────────────
-async function describeCharacter(imageBase64) {
-  const response = await anthropic.messages.create({
+const userSites = {};
+const userChats = {}; // История диалогов
+
+// ════════════════════════════════════════════════════════════
+// БЛОК 1: ГЕНЕРАЦИЯ КАРТИНОК
+// ════════════════════════════════════════════════════════════
+
+async function enhanceImagePrompt(userPrompt) {
+  const r = await anthropic.messages.create({
     model: 'claude-opus-4-6',
-    max_tokens: 400,
+    max_tokens: 200,
+    messages: [{ role: 'user', content: `Переведи на английский и улучши этот промпт для генерации картинки мем-токена/крипто логотипа. Сделай его детальным: стиль, цвета, качество. Оригинал: "${userPrompt}". Верни ТОЛЬКО улучшенный промпт, без объяснений.` }]
+  });
+  return r.content[0].text.trim();
+}
+
+async function generateImage(prompt) {
+  const enhanced = await enhanceImagePrompt(prompt);
+  const seed = Math.floor(Math.random() * 999999);
+  const encoded = encodeURIComponent(enhanced);
+  const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&model=flux-pro&seed=${seed}`;
+  const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 120000 });
+  return { buffer: Buffer.from(r.data), enhancedPrompt: enhanced };
+}
+
+// ════════════════════════════════════════════════════════════
+// БЛОК 2: ВОПРОСЫ И ЧАТБОТИК
+// ════════════════════════════════════════════════════════════
+
+async function askClaude(question, userId) {
+  if (!userChats[userId]) userChats[userId] = [];
+  userChats[userId].push({ role: 'user', content: question });
+
+  const r = await anthropic.messages.create({
+    model: 'claude-opus-4-6',
+    max_tokens: 1000,
+    system: `Ты — CloseKnuazAI, умный и весёлый крипто-ассистент в Telegram. Отвечаешь неформально, с характером, но по делу. 
+Специализация: крипта, мем-токены, pump.fun, Solana, запуск токенов, маркетинг в крипте.
+Можешь: придумывать идеи токенов, объяснять как работает крипта, помогать с названиями/слоганами, отвечать на любые вопросы.
+Стиль: живой, иногда с приколом, используй эмодзи умеренно. Не пиши простыни текста — отвечай компактно.`,
+    messages: userChats[userId].slice(-20)
+  });
+
+  const answer = r.content[0].text;
+  userChats[userId].push({ role: 'assistant', content: answer });
+  if (userChats[userId].length > 40) userChats[userId] = userChats[userId].slice(-20);
+  return answer;
+}
+
+// ════════════════════════════════════════════════════════════
+// БЛОК 3: СОЗДАНИЕ САЙТОВ (существующий код)
+// ════════════════════════════════════════════════════════════
+
+async function describeCharacter(imageBase64) {
+  const r = await anthropic.messages.create({
+    model: 'claude-opus-4-6', max_tokens: 500,
     messages: [{ role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
-      { type: 'text', text: 'Опиши этого персонажа подробно для веб-дизайнера: цвет, форма, стиль рисунка, детали, настроение, характер. 4-5 предложений. Только описание персонажа.' }
+      { type: 'text', text: 'Опиши персонажа детально для веб-дизайнера: цвет, форма, стиль, детали, настроение, характер. 5-6 предложений.' }
     ]}]
   });
-  return response.content[0].text;
+  return r.content[0].text;
 }
 
-// ─── Деплой файла на GitHub ───────────────────────────────────────────────────
-async function uploadFileToGitHub(content, filename, repoName, isBase64 = false) {
-  const headers = {
-    Authorization: `token ${process.env.GITHUB_TOKEN}`,
-    Accept: 'application/vnd.github.v3+json',
-    'Content-Type': 'application/json'
-  };
-  const username = process.env.GITHUB_USERNAME;
+async function createDesignPlan(description) {
+  const r = await anthropic.messages.create({
+    model: 'claude-opus-4-6', max_tokens: 1500,
+    messages: [{ role: 'user', content: `Ты — арт-директор топовых крипто-проектов. Проанализируй токен и создай дизайн-план.
 
-  let sha = null;
-  try {
-    const r = await axios.get(`https://api.github.com/repos/${username}/${repoName}/contents/${filename}`, { headers });
-    sha = r.data.sha;
-  } catch (e) {}
+ТОКЕН: ${description}
 
-  const encoded = isBase64 ? content : Buffer.from(content).toString('base64');
-  await axios.put(
-    `https://api.github.com/repos/${username}/${repoName}/contents/${filename}`,
-    { message: `Update ${filename}`, content: encoded, ...(sha && { sha }) },
-    { headers }
-  );
+Верни ТОЛЬКО JSON:
+{
+  "tokenName": "название",
+  "ticker": "ТИКЕР",
+  "slogan": "крутой слоган",
+  "personality": "характер токена 2-3 предложения",
+  "primaryColor": "#hex",
+  "secondaryColor": "#hex",
+  "bgColorStart": "#hex тёмный",
+  "bgColorEnd": "#hex тёмный",
+  "glowColor": "rgba(...)",
+  "fontTitle": "Google Font для заголовков",
+  "fontBody": "Google Font для текста",
+  "visualStyle": "описание стиля",
+  "mascotEmoji": "1-2 эмодзи",
+  "animationMood": "bouncy/smooth/glitchy/electric/cosmic",
+  "aboutPoints": [
+    {"icon":"эмодзи","title":"заголовок","text":"2 предложения"},
+    {"icon":"эмодзи","title":"заголовок","text":"2 предложения"},
+    {"icon":"эмодзи","title":"заголовок","text":"2 предложения"}
+  ],
+  "roadmap": [
+    {"phase":"Phase 1","title":"название","items":["пункт1","пункт2","пункт3"],"status":"done"},
+    {"phase":"Phase 2","title":"название","items":["пункт1","пункт2","пункт3"],"status":"active"},
+    {"phase":"Phase 3","title":"название","items":["пункт1","пункт2","пункт3"],"status":"upcoming"},
+    {"phase":"Phase 4","title":"название","items":["пункт1","пункт2","пункт3"],"status":"upcoming"}
+  ],
+  "tgLink":"# или ссылка",
+  "twitterLink":"# или ссылка",
+  "uniqueFeature":"уникальная фича дизайна специфично для этого токена"
+}` }]
+  });
+  let text = r.content[0].text.replace(/```json/g,'').replace(/```/g,'').trim();
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}')+1));
 }
 
-// ─── Создать репо если нет ────────────────────────────────────────────────────
-async function ensureRepo(repoName) {
-  const headers = {
-    Authorization: `token ${process.env.GITHUB_TOKEN}`,
-    Accept: 'application/vnd.github.v3+json',
-    'Content-Type': 'application/json'
-  };
-  const username = process.env.GITHUB_USERNAME;
-  try {
-    await axios.get(`https://api.github.com/repos/${username}/${repoName}`, { headers });
-  } catch (e) {
-    await axios.post('https://api.github.com/user/repos', { name: repoName, auto_init: true, private: false }, { headers });
-    await new Promise(r => setTimeout(r, 2000));
-    try {
-      await axios.post(`https://api.github.com/repos/${username}/${repoName}/pages`, { source: { branch: 'main', path: '/' } }, { headers });
-    } catch (err) {}
-  }
-}
+async function generateHtml(plan, hasMascot, mascotBase64=null) {
+  const mascotHtml = hasMascot && mascotBase64
+    ? `<img src="data:image/jpeg;base64,${mascotBase64}" alt="mascot" class="mascot">`
+    : `<div class="mascot">${plan.mascotEmoji}</div>`;
 
-// ─── Генерация сайта ──────────────────────────────────────────────────────────
-async function generateSite(description, existingHtml = null, hasMascot = false) {
-  let prompt;
+  const r = await anthropic.messages.create({
+    model: 'claude-opus-4-6', max_tokens: 16000,
+    messages: [{ role: 'user', content: `Создай УНИКАЛЬНЫЙ одностраничный HTML сайт для мем-токена по этому плану.
 
-  if (existingHtml) {
-    prompt = `Вот HTML сайта мем-токена:\n\n${existingHtml}\n\nВнеси изменение: ${description}\n\nВерни ТОЛЬКО полный HTML. Без объяснений. Без \`\`\`.`;
-  } else {
-    const mascotNote = hasMascot
-      ? `\nМАСКОТ: Файл mascot.jpg уже загружен в корень сайта. Используй его через <img src="mascot.jpg" alt="mascot"> в hero секции. Сделай его большим (300-400px), с floating анимацией.`
-      : '';
+ПЛАН: ${JSON.stringify(plan, null, 2)}
+МАСКОТ HTML: ${mascotHtml}
 
-    prompt = `Ты — лучший веб-разработчик крипто мем-токенов в мире. Создай ПРОФЕССИОНАЛЬНЫЙ сайт уровня dogwifhat.xyz или bonkcoin.com.
+CSS переменные в :root:
+--primary: ${plan.primaryColor}
+--secondary: ${plan.secondaryColor}  
+--bg-start: ${plan.bgColorStart}
+--bg-end: ${plan.bgColorEnd}
+--glow: ${plan.glowColor}
 
-ОПИСАНИЕ ТОКЕНА: ${description}
-${mascotNote}
+body background: linear-gradient(135deg, var(--bg-start), var(--bg-end)) — только это
 
-━━━━━━━━━━━━━━━━━━
-СТИЛЬ И ДИЗАЙН:
-━━━━━━━━━━━━━━━━━━
-Вдохновение: dogwifhat.xyz — тёмный фон, огромный маскот, минималистично но с характером
-Цвета: тёмно-фиолетовый/тёмно-синий фон (#050016, #0a0030), акценты подбери под тему токена
-Шрифты: подключи через Google Fonts — Orbitron или Space Grotesk для заголовков, Inter для текста
-Фон: чистый тёмный градиент БЕЗ паттернов и сеток — просто: body { background: linear-gradient(135deg, #050016 0%, #0a0030 100%); }
+ОБЯЗАТЕЛЬНЫЕ @keyframes:
+float { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-20px) rotate(2deg)} }
+textGlow { 0%,100%{text-shadow:0 0 20px var(--glow)} 50%{text-shadow:0 0 60px var(--glow),0 0 100px var(--glow)} }
+fadeInUp { from{opacity:0;transform:translateY(40px)} to{opacity:1;transform:translateY(0)} }
+btnPulse { 0%,100%{box-shadow:0 0 20px var(--glow)} 50%{box-shadow:0 0 50px var(--glow),0 0 100px var(--glow)} }
++ уникальная для этого токена (${plan.animationMood})
 
-━━━━━━━━━━━━━━━━━━
-СЕКЦИИ (строго по порядку):
-━━━━━━━━━━━━━━━━━━
+СЕКЦИИ:
+1. NAVBAR fixed, blur фон, лого "${plan.mascotEmoji} $${plan.ticker}", кнопка Buy
+2. HERO 100vh: ${mascotHtml} с float 3s infinite, h1 gradient, typewriter слоган, 3 кнопки, CA copy
+3. STATS 3 glassmorphism карточки, счётчики JS на setTimeout
+4. ABOUT 3 карточки: ${plan.aboutPoints.map(p=>`${p.icon} ${p.title}`).join(', ')}
+5. TOKENOMICS conic-gradient диаграмма + список
+6. ROADMAP таймлайн: ${plan.roadmap.map(r=>`${r.phase}[${r.status}]`).join(', ')}
+7. HOW TO BUY 4 шага
+8. GAME кликер — клик по маскоту = +1 токен, анимация "+1", уровни
+9. COMMUNITY Twitter, Telegram, Pump.fun
+10. FOOTER дисклеймер
 
-1. NAVBAR — position:fixed, background:rgba(5,0,22,0.95), backdrop-filter:blur(20px), border-bottom: 1px solid rgba(акцент, 0.2)
-   Слева: логотип + тикер. Справа: About, Tokenomics, Roadmap, Game + кнопка Buy
+JS: Canvas частицы, typewriter, счётчики, кликер, copy CA
+УНИКАЛЬНАЯ ФИЧА: ${plan.uniqueFeature}
 
-2. HERO — min-height:100vh, flex, center
-   - Маскот сверху (img или CSS персонаж), floating анимация
-   - Название огромное (gradient text: -webkit-background-clip:text)
-   - Слоган с typewriter эффектом
-   - 3 кнопки: Buy on Pump.fun (яркая), Twitter, Telegram
-   - CA адрес (placeholder) с кнопкой copy
-
-3. STATS — 3 карточки в ряд: Holders, Market Cap, Total Supply
-   Стиль: glassmorphism (rgba белый 0.05, blur, border rgba)
-   Числа анимируются через JS при загрузке страницы
-
-4. ABOUT — 3 карточки с иконками (используй эмодзи как иконки)
-   Glassmorphism стиль, текст о токене
-
-5. TOKENOMICS — CSS conic-gradient диаграмма + список справа
-   5 категорий: Community 40%, Liquidity 20%, Team 15%, Marketing 15%, Reserve 10%
-
-6. ROADMAP — вертикальный таймлайн, 4 фазы
-   Phase 1 ✅ Launch, Phase 2 🔄 Growth, Phase 3 🚀 Moon, Phase 4 🌕 Mars
-
-7. HOW TO BUY — 4 шага в карточках с номерами
-   1.Get Phantom Wallet 2.Buy SOL 3.Go to Pump.fun 4.Swap for [token]
-
-8. GAME — кликер
-   Заголовок "CLICK TO EARN $[TICKER]"
-   Большой маскот/эмодзи в центре, при клике: score++, анимация "+1" летит вверх
-   Счётчик токенов, уровни каждые 100 кликов, красивый UI
-
-9. COMMUNITY — 3 большие карточки: Twitter, Telegram, pump.fun
-   Кнопки перехода на каждой
-
-10. FOOTER — короткий дисклеймер, copyright
-
-━━━━━━━━━━━━━━━━━━
-ОБЯЗАТЕЛЬНЫЕ АНИМАЦИИ (CSS @keyframes только):
-━━━━━━━━━━━━━━━━━━
-@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-20px)} }
-@keyframes gradientText { 0%{background-position:0%} 100%{background-position:200%} }
-@keyframes fadeInUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
-@keyframes clickPop { 0%{transform:scale(1)} 50%{transform:scale(0.85)} 100%{transform:scale(1)} }
-
-Маскот: animation: float 3s ease-in-out infinite
-Hero секция: animation: fadeInUp 0.8s ease forwards
-Кнопки: transition: all 0.3s, hover { transform:translateY(-3px), box-shadow усиливается }
-
-━━━━━━━━━━━━━━━━━━
-JS (в конце перед </body>):
-━━━━━━━━━━━━━━━━━━
-1. Typewriter для слогана
-2. Счётчики stats при загрузке страницы (без IntersectionObserver — просто setTimeout 500ms)
-3. Кликер игра (score, level, анимация +1)
-4. Copy CA адреса
-
-ВАЖНО:
-- Весь контент видим сразу — НЕ используй opacity:0 на секциях!
-- Один HTML файл, <style> и <script> внутри
-- Минимум 500 строк
-- Начни с <!DOCTYPE html>
-
-Верни ТОЛЬКО HTML. Без \`\`\`. Без объяснений.`;
-  }
-
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
-    max_tokens: 16000,
-    messages: [{ role: 'user', content: prompt }]
+СТРОГО: весь контент видим сразу (NO opacity:0 на секциях!), один файл.
+Верни ТОЛЬКО HTML начиная с <!DOCTYPE html>. Без \`\`\`.` }]
   });
 
-  let html = response.content[0].text;
-  html = html.replace(/```html/gi, '').replace(/```/g, '').trim();
+  let html = r.content[0].text.replace(/```html/gi,'').replace(/```/g,'').trim();
+  if (!html.startsWith('<!')) html = '<!DOCTYPE html>\n' + html;
   if (!html.includes('</html>')) html += '\n</body></html>';
   return html;
 }
 
-// ─── Генерация summary ────────────────────────────────────────────────────────
-async function generateSummary(description, isEdit = false, editText = '') {
-  const prompt = isEdit
-    ? `Ты весёлый бот. Обновил сайт. Изменение: "${editText}". Напиши ТОЛЬКО 2-3 предложения обычного текста неформально. БЕЗ HTML. БЕЗ кода.`
-    : `Ты весёлый бот. Сделал сайт мем-токена. Описание: "${description}". Напиши ТОЛЬКО 3-4 предложения обычного текста — имя токена, что добавил, дизайн. БЕЗ HTML. БЕЗ кода. Говори живо.`;
-
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
-    max_tokens: 150,
-    messages: [{ role: 'user', content: prompt }]
-  });
-
-  return response.content[0].text.replace(/<[^>]*>/g, '').replace(/```[\s\S]*?```/g, '').trim();
+async function ensureRepo(repoName) {
+  const h = { Authorization: `token ${process.env.GITHUB_TOKEN}`, Accept: 'application/vnd.github.v3+json' };
+  const u = process.env.GITHUB_USERNAME;
+  try { await axios.get(`https://api.github.com/repos/${u}/${repoName}`, { headers: h }); }
+  catch {
+    await axios.post('https://api.github.com/user/repos', { name: repoName, auto_init: true, private: false }, { headers: h });
+    await new Promise(r => setTimeout(r, 2000));
+    try { await axios.post(`https://api.github.com/repos/${u}/${repoName}/pages`, { source: { branch: 'main', path: '/' } }, { headers: h }); } catch {}
+  }
 }
 
-// ─── Скачать фото ─────────────────────────────────────────────────────────────
-async function downloadPhoto(ctx, fileId) {
-  const file = await ctx.telegram.getFile(fileId);
-  const url = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
-  const response = await axios.get(url, { responseType: 'arraybuffer' });
-  return Buffer.from(response.data);
+async function uploadFile(content, filename, repoName, isBase64=false) {
+  const h = { Authorization: `token ${process.env.GITHUB_TOKEN}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' };
+  const u = process.env.GITHUB_USERNAME;
+  let sha = null;
+  try { sha = (await axios.get(`https://api.github.com/repos/${u}/${repoName}/contents/${filename}`, { headers: h })).data.sha; } catch {}
+  await axios.put(`https://api.github.com/repos/${u}/${repoName}/contents/${filename}`,
+    { message: `Update ${filename}`, content: isBase64 ? content : Buffer.from(content).toString('base64'), ...(sha && { sha }) },
+    { headers: h });
 }
 
-// ─── Создать + задеплоить сайт ────────────────────────────────────────────────
-async function handleCreate(ctx, description, msg, imageBuffer = null) {
+async function handleCreate(ctx, description, msg, imageBuffer=null) {
   const userId = ctx.from.id;
   const repoName = `token-${userId}`;
-
   try {
-    // Шаг 1
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🏗️ Создаю репозиторий...');
-    await ensureRepo(repoName);
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🧠 Анализирую токен, придумываю дизайн...');
+    const plan = await createDesignPlan(description);
 
-    // Шаг 2 — загружаем картинку если есть
-    let hasMascot = false;
-    if (imageBuffer) {
-      await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🖼️ Загружаю картинку на сайт...');
-      await uploadFileToGitHub(imageBuffer.toString('base64'), 'mascot.jpg', repoName, true);
-      hasMascot = true;
-    }
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `🎨 Пишу код для $${plan.ticker}...`);
+    const mascotBase64 = imageBuffer ? imageBuffer.toString('base64') : null;
+    const html = await generateHtml(plan, !!imageBuffer, mascotBase64);
+    userSites[userId] = { html, repoName, plan };
 
-    // Шаг 3 — генерируем HTML
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎨 Генерирую дизайн и код...');
-    const html = await generateSite(description, null, hasMascot);
-    userSites[userId] = { html, repoName };
-
-    // Шаг 4 — деплоим
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Деплою на GitHub...');
-    await uploadFileToGitHub(html, 'index.html', repoName);
+    await ensureRepo(repoName);
+    await uploadFile(html, 'index.html', repoName);
+    if (imageBuffer) await uploadFile(imageBuffer.toString('base64'), 'mascot.jpg', repoName, true);
 
-    // Шаг 5 — summary
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '✍️ Пишу результат...');
-    const summary = await generateSummary(description);
+    const r = await anthropic.messages.create({
+      model: 'claude-opus-4-6', max_tokens: 150,
+      messages: [{ role: 'user', content: `Ты весёлый бот. Сделал сайт для ${plan.ticker} — ${plan.tokenName}. Слоган: ${plan.slogan}. 3 предложения неформально. БЕЗ HTML.` }]
+    });
+    const summary = r.content[0].text.replace(/<[^>]*>/g,'').trim();
 
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
-
     await ctx.reply(summary, Markup.inlineKeyboard([
-      [Markup.button.callback('✏️ Редактировать', 'edit_prompt')],
-      [Markup.button.callback('📥 Скачать HTML', 'download_html')]
+      [Markup.button.callback('✏️ Редактировать', 'edit_prompt'), Markup.button.callback('📥 Скачать HTML', 'download_html')]
     ]));
-
     await ctx.replyWithDocument(
       { source: Buffer.from(html), filename: 'index.html' },
-      { caption: `☝️ Открывай в браузере!\n\n🔗 GitHub Pages (2-5 мин): https://${process.env.GITHUB_USERNAME}.github.io/${repoName}` }
+      { caption: `☝️ Открывай в браузере!\n🔗 Онлайн (2-5 мин): https://${process.env.GITHUB_USERNAME}.github.io/${repoName}` }
     );
-
   } catch (err) {
     console.error(err);
-    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch(e) {}
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
   }
 }
 
-// ─── /start ───────────────────────────────────────────────────────────────────
-bot.start((ctx) => ctx.reply(`👋 Зд перцы! Я бот для создания сайтов, меня зовут CloseKnuazAI!\n\nЧо я могу крч рассказываю:\n🌐 /create — создать сайт\n✏️ /edit — редактировать текущий сайт\n📥 /download — скачать HTML файл\n❓ /help — расскажу чд могу поподробнее\n\nКрч жми /create чтобы начать!`));
+// ════════════════════════════════════════════════════════════
+// КОМАНДЫ БОТА
+// ════════════════════════════════════════════════════════════
 
-bot.help((ctx) => ctx.reply(`📖 Как пользоваться:\n\n/create [описание] — создать сайт текстом\nПример: /create токен PEPE, зелёная лягушка, tg @pepe, twitter @pepe\n\nИли отправь 🖼️ картинку с подписью — загружу её на сайт как маскот!\n\n/edit [что изменить] — изменить сайт\n/download — скачать HTML файл`));
+bot.start((ctx) => ctx.reply(
+  `👋 Зд! Я CloseKnuazAI — твой крипто-агент 🤖\n\nЧо умею:\n🌐 /create — сделать сайт мем-токена\n🖼 /image — сгенерить картинку по описанию\n💡 /idea — придумать идею токена\n💬 /ask — задать любой вопрос\n✏️ /edit — изменить последний сайт\n📥 /download — скачать HTML\n\nИли просто напиши мне что хочешь — разберёмся 😎`
+));
 
+bot.help((ctx) => ctx.reply(
+  `📖 Команды:\n\n🌐 /create [описание] — сайт токена\nПример: /create токен PEPE, лягушка, tg @pepe\n\n🖼 /image [описание] — картинка\nПример: /image злой кролик в космосе, неон стиль\n\n💡 /idea [тема] — идея токена\nПример: /idea хочу токен про котов\n\n💬 /ask [вопрос] — любой вопрос\nПример: /ask как запустить токен на pump.fun?\n\nИли просто отправь фото с подписью — сделаю сайт с твоим персонажем!`
+));
+
+// /create
 bot.command('create', async (ctx) => {
-  const description = ctx.message.text.replace('/create', '').trim();
-  if (!description) return ctx.reply('✍️ Напиши описание!\n\nПример:\n/create токен PEPE, зелёная лягушка, tg @pepe, twitter @pepe\n\nИли отправь картинку с подписью!');
+  const desc = ctx.message.text.replace('/create','').trim();
+  if (!desc) return ctx.reply('✍️ Напиши описание!\nПример: /create токен DOGE, собака, tg @doge, twitter @doge');
   const msg = await ctx.reply('⏳ Начинаю...');
-  await handleCreate(ctx, description, msg);
+  await handleCreate(ctx, desc, msg);
 });
 
-bot.on('photo', async (ctx) => {
-  const caption = ctx.message.caption || '';
-  if (!caption) return ctx.reply('✍️ Добавь подпись к картинке!\n\nПример подписи: токен BUNNY, злой кролик, tg @bunny, twitter @bunny');
-
-  const msg = await ctx.reply('👀 Вижу картинку, смотрю на персонажа...');
+// /image
+bot.command('image', async (ctx) => {
+  const prompt = ctx.message.text.replace('/image','').trim();
+  if (!prompt) return ctx.reply('✍️ Напиши что нарисовать!\nПример: /image злой кролик с лазерными глазами, крипто стиль, неон');
+  const msg = await ctx.reply('🎨 Генерирую картинку... ~30 секунд');
   try {
-    const photos = ctx.message.photo;
-    const imageBuffer = await downloadPhoto(ctx, photos[photos.length - 1].file_id);
-    const imageBase64 = imageBuffer.toString('base64');
-
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🔍 Описываю персонажа...');
-    const characterDesc = await describeCharacter(imageBase64);
-
-    const fullDescription = `${caption}. Внешность персонажа-маскота: ${characterDesc}`;
-    await handleCreate(ctx, fullDescription, msg, imageBuffer);
+    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎨 Улучшаю промпт...');
+    const { buffer, enhancedPrompt } = await generateImage(prompt);
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+    await ctx.replyWithPhoto(
+      { source: buffer, filename: 'image.jpg' },
+      { caption: `🖼 Готово!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}...`,
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Ещё вариант', `regen_${encodeURIComponent(prompt).slice(0,50)}`)]
+        ]).reply_markup }
+    );
   } catch (err) {
     console.error(err);
-    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch(e) {}
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка генерации: ${err.message}\n\nПопробуй ещё раз или измени промпт`); } catch {}
   }
 });
 
+// /idea
+bot.command('idea', async (ctx) => {
+  const theme = ctx.message.text.replace('/idea','').trim();
+  const prompt = theme
+    ? `Придумай крутую идею мем-токена на тему: "${theme}". Дай: название, тикер, слоган, концепцию (3-4 предложения), почему это выстрелит. Неформально, с энтузиазмом.`
+    : `Придумай случайную крутую идею мем-токена. Дай: название, тикер, слоган, концепцию (3-4 предложения), почему это выстрелит. Неформально, с энтузиазмом.`;
+  const msg = await ctx.reply('💡 Думаю...');
+  try {
+    const answer = await askClaude(prompt, ctx.from.id);
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+    await ctx.reply(answer, Markup.inlineKeyboard([
+      [Markup.button.callback('🌐 Сделать сайт для этой идеи', 'create_from_idea')],
+      [Markup.button.callback('💡 Ещё идея', 'another_idea')]
+    ]));
+  } catch (err) {
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+  }
+});
+
+// /ask
+bot.command('ask', async (ctx) => {
+  const question = ctx.message.text.replace('/ask','').trim();
+  if (!question) return ctx.reply('✍️ Напиши вопрос!\nПример: /ask как запустить токен на pump.fun?');
+  const msg = await ctx.reply('🤔 Думаю...');
+  try {
+    const answer = await askClaude(question, ctx.from.id);
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+    await ctx.reply(answer);
+  } catch (err) {
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+  }
+});
+
+// Обычные сообщения — как чатбот
+bot.on('text', async (ctx) => {
+  if (ctx.message.text.startsWith('/')) return;
+  const msg = await ctx.reply('🤔 Думаю...');
+  try {
+    const answer = await askClaude(ctx.message.text, ctx.from.id);
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+    await ctx.reply(answer);
+  } catch (err) {
+    try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {}
+  }
+});
+
+// Фото
+bot.on('photo', async (ctx) => {
+  const caption = ctx.message.caption || '';
+  if (!caption) return ctx.reply('✍️ Добавь подпись к фото!\nПример: токен BUNNY, злой кролик, tg @bunny');
+  const msg = await ctx.reply('👀 Вижу картинку, описываю персонажа...');
+  try {
+    const imageBuffer = await (async () => {
+      const file = await ctx.telegram.getFile(ctx.message.photo[ctx.message.photo.length-1].file_id);
+      const r = await axios.get(`https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`, { responseType: 'arraybuffer' });
+      return Buffer.from(r.data);
+    })();
+    const characterDesc = await describeCharacter(imageBuffer.toString('base64'));
+    await handleCreate(ctx, `${caption}. Персонаж: ${characterDesc}`, msg, imageBuffer);
+  } catch (err) {
+    console.error(err);
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+  }
+});
+
+// /edit
 bot.command('edit', async (ctx) => {
   const userId = ctx.from.id;
-  const editText = ctx.message.text.replace('/edit', '').trim();
+  const editText = ctx.message.text.replace('/edit','').trim();
   if (!userSites[userId]) return ctx.reply('❌ Сначала создай сайт командой /create');
-  if (!editText) return ctx.reply('✍️ Напиши что изменить!\n\nПример: /edit сделай фон темнее и добавь счётчик');
-
+  if (!editText) return ctx.reply('✍️ Напиши что изменить!\nПример: /edit сделай фон темнее и добавь счётчик');
   const msg = await ctx.reply('🎨 Вношу изменения...');
   try {
-    const newHtml = await generateSite(editText, userSites[userId].html);
+    const newHtml = await generateHtml({ ...userSites[userId].plan }, false, null);
     userSites[userId].html = newHtml;
-
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Обновляю...');
-    await uploadFileToGitHub(newHtml, 'index.html', userSites[userId].repoName);
-
-    await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '✍️ Пишу результат...');
-    const summary = await generateSummary('', true, editText);
-
+    await uploadFile(newHtml, 'index.html', userSites[userId].repoName);
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
-    await ctx.reply(summary, Markup.inlineKeyboard([[Markup.button.callback('✏️ Ещё', 'edit_prompt')], [Markup.button.callback('📥 Скачать HTML', 'download_html')]]));
+    await ctx.reply('✅ Обновил!', Markup.inlineKeyboard([[Markup.button.callback('✏️ Ещё', 'edit_prompt'), Markup.button.callback('📥 Скачать', 'download_html')]]));
     await ctx.replyWithDocument({ source: Buffer.from(newHtml), filename: 'index.html' }, { caption: '☝️ Обновлённый сайт!' });
   } catch (err) {
     console.error(err);
-    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch(e) {}
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
   }
 });
 
@@ -305,14 +358,28 @@ bot.command('download', async (ctx) => {
   await ctx.replyWithDocument({ source: Buffer.from(userSites[userId].html), filename: 'index.html' });
 });
 
-bot.action('edit_prompt', (ctx) => { ctx.answerCbQuery(); ctx.reply('✍️ Напиши что изменить:\n\n/edit [твои изменения]'); });
+// Кнопки
+bot.action('edit_prompt', (ctx) => { ctx.answerCbQuery(); ctx.reply('✍️ /edit [что изменить]'); });
 bot.action('download_html', async (ctx) => {
   ctx.answerCbQuery();
   const userId = ctx.from.id;
   if (userSites[userId]) await ctx.replyWithDocument({ source: Buffer.from(userSites[userId].html), filename: 'index.html' });
 });
+bot.action('another_idea', async (ctx) => {
+  ctx.answerCbQuery();
+  const msg = await ctx.reply('💡 Думаю ещё...');
+  try {
+    const answer = await askClaude('Придумай ещё одну случайную крутую идею мем-токена, другую тему.', ctx.from.id);
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+    await ctx.reply(answer, Markup.inlineKeyboard([[Markup.button.callback('💡 Ещё', 'another_idea')]]));
+  } catch {}
+});
+bot.action('create_from_idea', (ctx) => {
+  ctx.answerCbQuery();
+  ctx.reply('✍️ Скопируй идею и напиши:\n/create [описание токена из идеи выше]');
+});
 
 bot.launch();
-console.log('🤖 Бот запущен!');
+console.log('🤖 CloseKnuazAI запущен!');
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
