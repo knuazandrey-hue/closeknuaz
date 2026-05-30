@@ -241,8 +241,8 @@ JS: Canvas частицы, typewriter, счётчики, кликер, copy CA
   let chunkCount = 0;
 
   const stream = anthropic.messages.stream({
-    model: 'claude-opus-4-6',
-    max_tokens: 16000,
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
     messages: [{ role: 'user', content: prompt }]
   });
 
@@ -351,7 +351,10 @@ bot.command('create', async (ctx) => {
   const desc = ctx.message.text.replace('/create','').trim();
   if (!desc) return ctx.reply('✍️ Напиши описание!\nПример: /create токен DOGE, собака, tg @doge, twitter @doge');
   const msg = await ctx.reply('⏳ Начинаю...');
-  await handleCreate(ctx, desc, msg);
+  // Запускаем в фоне — хендлер не ждёт
+  handleCreate(ctx, desc, msg).catch(async (err) => {
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+  });
 });
 
 // /image
@@ -457,7 +460,11 @@ bot.on('text', async (ctx) => {
   if (state === 'waiting_create') {
     userStates[userId] = null;
     const msg = await ctx.reply('⏳ Начинаю...', mainMenu);
-    return handleCreate(ctx, text, msg);
+    // Запускаем в фоне
+    handleCreate(ctx, text, msg).catch(async (err) => {
+      try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+    });
+    return;
   }
 
   if (state === 'waiting_image') {
@@ -581,18 +588,21 @@ bot.on('photo', async (ctx) => {
   const caption = ctx.message.caption || '';
   if (!caption) return ctx.reply('✍️ Добавь подпись к фото!\nПример: токен BUNNY, злой кролик, tg @bunny');
   const msg = await ctx.reply('👀 Вижу картинку, описываю персонажа...');
-  try {
-    const imageBuffer = await (async () => {
-      const file = await ctx.telegram.getFile(ctx.message.photo[ctx.message.photo.length-1].file_id);
-      const r = await axios.get(`https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`, { responseType: 'arraybuffer' });
-      return Buffer.from(r.data);
-    })();
-    const characterDesc = await describeCharacter(imageBuffer.toString('base64'));
-    await handleCreate(ctx, `${caption}. Персонаж: ${characterDesc}`, msg, imageBuffer);
-  } catch (err) {
-    console.error(err);
-    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
-  }
+  // Запускаем в фоне
+  (async () => {
+    try {
+      const imageBuffer = await (async () => {
+        const file = await ctx.telegram.getFile(ctx.message.photo[ctx.message.photo.length-1].file_id);
+        const r = await axios.get(`https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`, { responseType: 'arraybuffer' });
+        return Buffer.from(r.data);
+      })();
+      const characterDesc = await describeCharacter(imageBuffer.toString('base64'));
+      await handleCreate(ctx, `${caption}. Персонаж: ${characterDesc}`, msg, imageBuffer);
+    } catch (err) {
+      console.error(err);
+      try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+    }
+  })();
 });
 
 // /edit
