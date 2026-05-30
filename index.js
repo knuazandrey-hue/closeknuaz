@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
+const { jsonrepair } = require('jsonrepair');
 
 const bot = new Telegraf(process.env.BOT_TOKEN, { handlerTimeout: 600000 });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -139,7 +140,7 @@ async function createDesignPlan(description) {
     .replace(/\t/g, ' ');              // табы
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(jsonrepair(text));
   } catch (e) {
     // Если всё ещё не парсится — используем дефолтный план
     console.error('JSON parse error:', e.message, '\nText:', text.slice(0, 200));
