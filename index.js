@@ -154,9 +154,9 @@ btnPulse { 0%,100%{box-shadow:0 0 20px var(--glow)} 50%{box-shadow:0 0 50px var(
 1. NAVBAR fixed, blur фон, лого "${plan.mascotEmoji} $${plan.ticker}", кнопка Buy
 2. HERO 100vh: ${mascotHtml} с float 3s infinite, h1 gradient, typewriter слоган, 3 кнопки, CA copy
 3. STATS 3 glassmorphism карточки, счётчики JS на setTimeout
-4. ABOUT 3 карточки: ${plan.aboutPoints.map(p=>`${p.icon} ${p.title}`).join(', ')}
+4. ABOUT 3 карточки: ${plan.aboutPoints.map(p=> p.icon + ' ' + p.title).join(', ')}
 5. TOKENOMICS conic-gradient диаграмма + список
-6. ROADMAP таймлайн: ${plan.roadmap.map(r=>`${r.phase}[${r.status}]`).join(', ')}
+6. ROADMAP таймлайн: ${plan.roadmap.map(r=> r.phase + '[' + r.status + ']').join(', ')}
 7. HOW TO BUY 4 шага
 8. GAME кликер — клик по маскоту = +1 токен, анимация "+1", уровни
 9. COMMUNITY Twitter, Telegram, Pump.fun
@@ -447,6 +447,8 @@ bot.on('text', async (ctx) => {
     }
     return;
   }
+
+  if (state === 'waiting_edit') {
     userStates[userId] = null;
     const msg = await ctx.reply('🎨 Вношу изменения...');
     try {
