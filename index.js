@@ -86,57 +86,112 @@ async function createDesignPlan(description) {
 
 ТОКЕН: ${description}
 
-Верни ТОЛЬКО JSON:
+Верни ТОЛЬКО валидный JSON без комментариев и без markdown:
 {
   "tokenName": "название",
   "ticker": "ТИКЕР",
   "slogan": "крутой слоган",
   "personality": "характер токена 2-3 предложения",
-  "primaryColor": "#hex",
-  "secondaryColor": "#hex",
-  "bgColorStart": "#hex тёмный",
-  "bgColorEnd": "#hex тёмный",
-  "glowColor": "rgba(...)",
-  "fontTitle": "Google Font для заголовков",
-  "fontBody": "Google Font для текста",
+  "primaryColor": "#7b2fff",
+  "secondaryColor": "#00ffcc",
+  "bgColorStart": "#05001a",
+  "bgColorEnd": "#0a0030",
+  "glowColor": "rgba(123, 47, 255, 0.8)",
+  "fontTitle": "Orbitron",
+  "fontBody": "Inter",
   "visualStyle": "описание стиля",
-  "mascotEmoji": "1-2 эмодзи",
-  "animationMood": "bouncy/smooth/glitchy/electric/cosmic",
+  "mascotEmoji": "🐸",
+  "animationMood": "bouncy",
   "aboutPoints": [
-    {"icon":"эмодзи","title":"заголовок","text":"2 предложения"},
-    {"icon":"эмодзи","title":"заголовок","text":"2 предложения"},
-    {"icon":"эмодзи","title":"заголовок","text":"2 предложения"}
+    {"icon":"🚀","title":"заголовок","text":"2 предложения"},
+    {"icon":"💎","title":"заголовок","text":"2 предложения"},
+    {"icon":"🔥","title":"заголовок","text":"2 предложения"}
   ],
   "roadmap": [
-    {"phase":"Phase 1","title":"название","items":["пункт1","пункт2","пункт3"],"status":"done"},
-    {"phase":"Phase 2","title":"название","items":["пункт1","пункт2","пункт3"],"status":"active"},
-    {"phase":"Phase 3","title":"название","items":["пункт1","пункт2","пункт3"],"status":"upcoming"},
-    {"phase":"Phase 4","title":"название","items":["пункт1","пункт2","пункт3"],"status":"upcoming"}
+    {"phase":"Phase 1","title":"Launch","items":["пункт1","пункт2","пункт3"],"status":"done"},
+    {"phase":"Phase 2","title":"Growth","items":["пункт1","пункт2","пункт3"],"status":"active"},
+    {"phase":"Phase 3","title":"Moon","items":["пункт1","пункт2","пункт3"],"status":"upcoming"},
+    {"phase":"Phase 4","title":"Mars","items":["пункт1","пункт2","пункт3"],"status":"upcoming"}
   ],
-  "tgLink":"# или ссылка",
-  "twitterLink":"# или ссылка",
-  "uniqueFeature":"уникальная фича дизайна специфично для этого токена"
+  "tgLink":"#",
+  "twitterLink":"#",
+  "uniqueFeature":"уникальная фича дизайна для этого токена"
 }` }]
   });
-  let text = r.content[0].text.replace(/```json/g,'').replace(/```/g,'').trim();
-  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}')+1));
+
+  let text = r.content[0].text;
+
+  // Убираем markdown и лишнее
+  text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+  // Берём только JSON объект
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}') + 1;
+  if (start === -1 || end === 0) throw new Error('Claude не вернул JSON');
+  text = text.slice(start, end);
+
+  // Чистим частые проблемы в JSON от Claude
+  text = text
+    .replace(/,\s*}/g, '}')           // trailing comma в объекте
+    .replace(/,\s*]/g, ']')           // trailing comma в массиве
+    .replace(/[\x00-\x1F\x7F]/g, ' ') // управляющие символы
+    .replace(/\n/g, ' ')               // переносы строк внутри строк
+    .replace(/\t/g, ' ');              // табы
+
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Если всё ещё не парсится — используем дефолтный план
+    console.error('JSON parse error:', e.message, '\nText:', text.slice(0, 200));
+
+    // Пробуем достать хотя бы имя токена из описания
+    const ticker = (description.match(/\b([A-Z]{2,8})\b/) || ['', 'TOKEN'])[1];
+    return {
+      tokenName: ticker + ' Token',
+      ticker: ticker,
+      slogan: 'To the moon and back',
+      personality: 'Energetic meme token with big ambitions',
+      primaryColor: '#7b2fff',
+      secondaryColor: '#00ffcc',
+      bgColorStart: '#05001a',
+      bgColorEnd: '#0a0030',
+      glowColor: 'rgba(123, 47, 255, 0.8)',
+      fontTitle: 'Orbitron',
+      fontBody: 'Inter',
+      visualStyle: 'cyberpunk dark',
+      mascotEmoji: '🚀',
+      animationMood: 'bouncy',
+      aboutPoints: [
+        { icon: '🚀', title: 'To The Moon', text: 'Fast and furious token launch. Community driven growth.' },
+        { icon: '💎', title: 'Diamond Hands', text: 'Hold strong and get rewarded. True believers win.' },
+        { icon: '🔥', title: 'Burn Mechanism', text: 'Deflationary token. Every trade burns supply.' }
+      ],
+      roadmap: [
+        { phase: 'Phase 1', title: 'Launch', items: ['Token launch', 'Community building', 'Pump.fun listing'], status: 'done' },
+        { phase: 'Phase 2', title: 'Growth', items: ['10k holders', 'CEX listing', 'Marketing push'], status: 'active' },
+        { phase: 'Phase 3', title: 'Moon', items: ['100k holders', 'Major exchange', 'Merch drop'], status: 'upcoming' },
+        { phase: 'Phase 4', title: 'Mars', items: ['1M holders', 'DAO launch', 'World domination'], status: 'upcoming' }
+      ],
+      tgLink: '#',
+      twitterLink: '#',
+      uniqueFeature: 'Animated particle explosion on button click'
+    };
+  }
 }
 
-async function generateHtml(plan, hasMascot, mascotBase64=null) {
+async function generateHtml(plan, hasMascot, mascotBase64 = null, progressCallback = null) {
   const mascotHtml = hasMascot && mascotBase64
     ? `<img src="data:image/jpeg;base64,${mascotBase64}" alt="mascot" class="mascot">`
     : `<div class="mascot">${plan.mascotEmoji}</div>`;
 
-  const r = await anthropic.messages.create({
-    model: 'claude-opus-4-6', max_tokens: 16000,
-    messages: [{ role: 'user', content: `Создай УНИКАЛЬНЫЙ одностраничный HTML сайт для мем-токена по этому плану.
+  const prompt = `Создай УНИКАЛЬНЫЙ одностраничный HTML сайт для мем-токена по этому плану.
 
 ПЛАН: ${JSON.stringify(plan, null, 2)}
 МАСКОТ HTML: ${mascotHtml}
 
 CSS переменные в :root:
 --primary: ${plan.primaryColor}
---secondary: ${plan.secondaryColor}  
+--secondary: ${plan.secondaryColor}
 --bg-start: ${plan.bgColorStart}
 --bg-end: ${plan.bgColorEnd}
 --glow: ${plan.glowColor}
@@ -154,9 +209,9 @@ btnPulse { 0%,100%{box-shadow:0 0 20px var(--glow)} 50%{box-shadow:0 0 50px var(
 1. NAVBAR fixed, blur фон, лого "${plan.mascotEmoji} $${plan.ticker}", кнопка Buy
 2. HERO 100vh: ${mascotHtml} с float 3s infinite, h1 gradient, typewriter слоган, 3 кнопки, CA copy
 3. STATS 3 glassmorphism карточки, счётчики JS на setTimeout
-4. ABOUT 3 карточки: ${plan.aboutPoints.map(p=> p.icon + ' ' + p.title).join(', ')}
+4. ABOUT 3 карточки: ${plan.aboutPoints.map(p => p.icon + ' ' + p.title).join(', ')}
 5. TOKENOMICS conic-gradient диаграмма + список
-6. ROADMAP таймлайн: ${plan.roadmap.map(r=> r.phase + '[' + r.status + ']').join(', ')}
+6. ROADMAP таймлайн: ${plan.roadmap.map(r => r.phase + '[' + r.status + ']').join(', ')}
 7. HOW TO BUY 4 шага
 8. GAME кликер — клик по маскоту = +1 токен, анимация "+1", уровни
 9. COMMUNITY Twitter, Telegram, Pump.fun
@@ -166,10 +221,31 @@ JS: Canvas частицы, typewriter, счётчики, кликер, copy CA
 УНИКАЛЬНАЯ ФИЧА: ${plan.uniqueFeature}
 
 СТРОГО: весь контент видим сразу (NO opacity:0 на секциях!), один файл.
-Верни ТОЛЬКО HTML начиная с <!DOCTYPE html>. Без \`\`\`.` }]
+Верни ТОЛЬКО HTML начиная с <!DOCTYPE html>. Без \`\`\`.`;
+
+  // Стриминг — соединение не рвётся пока Claude пишет
+  let html = '';
+  let chunkCount = 0;
+
+  const stream = anthropic.messages.stream({
+    model: 'claude-opus-4-6',
+    max_tokens: 16000,
+    messages: [{ role: 'user', content: prompt }]
   });
 
-  let html = r.content[0].text.replace(/```html/gi,'').replace(/```/g,'').trim();
+  stream.on('text', (text) => {
+    html += text;
+    chunkCount++;
+    // Обновляем прогресс каждые 60 чанков (~30 сек)
+    if (progressCallback && chunkCount % 60 === 0) {
+      const lines = html.split('\n').length;
+      progressCallback(lines).catch(() => {});
+    }
+  });
+
+  await stream.finalMessage();
+
+  html = html.replace(/```html/gi, '').replace(/```/g, '').trim();
   if (!html.startsWith('<!')) html = '<!DOCTYPE html>\n' + html;
   if (!html.includes('</html>')) html += '\n</body></html>';
   return html;
@@ -205,7 +281,18 @@ async function handleCreate(ctx, description, msg, imageBuffer=null) {
 
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `🎨 Пишу код для $${plan.ticker}...`);
     const mascotBase64 = imageBuffer ? imageBuffer.toString('base64') : null;
-    const html = await generateHtml(plan, !!imageBuffer, mascotBase64);
+
+    // Передаём колбэк для обновления прогресса
+    const progressCallback = async (lines) => {
+      try {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id, msg.message_id, null,
+          `✍️ Пишу код для $${plan.ticker}... (~${lines} строк написано)`
+        );
+      } catch {}
+    };
+
+    const html = await generateHtml(plan, !!imageBuffer, mascotBase64, progressCallback);
     userSites[userId] = { html, repoName, plan };
 
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Деплою на GitHub...');
