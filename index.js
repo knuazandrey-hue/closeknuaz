@@ -9,6 +9,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const userSites = {};
 const userChats = {}; // История диалогов
 const userStates = {}; // Ожидание ввода
+const userLastImage = {}; // Последний промпт картинки
 
 // ─── Главное меню (кнопки внизу чата) ────────────────────────────────────────
 const mainMenu = Markup.keyboard([
@@ -261,13 +262,17 @@ bot.command('image', async (ctx) => {
   try {
     await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎨 Улучшаю промпт...');
     const { buffer, enhancedPrompt } = await generateImage(prompt);
+    userLastImage[ctx.from.id] = { original: prompt, enhanced: enhancedPrompt };
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
     await ctx.replyWithPhoto(
       { source: buffer, filename: 'image.jpg' },
-      { caption: `🖼 Готово!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}...`,
+      {
+        caption: `🖼 Готово!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}`,
         reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Ещё вариант', `regen_${encodeURIComponent(prompt).slice(0,50)}`)]
-        ]).reply_markup }
+          [Markup.button.callback('✏️ Изменить картинку', 'edit_image')],
+          [Markup.button.callback('🔄 Другой вариант', 'regen_image')]
+        ]).reply_markup
+      }
     );
   } catch (err) {
     console.error(err);
@@ -361,10 +366,17 @@ bot.on('text', async (ctx) => {
     try {
       await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎨 Улучшаю промпт...');
       const { buffer, enhancedPrompt } = await generateImage(text);
+      userLastImage[userId] = { original: text, enhanced: enhancedPrompt };
       await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
       await ctx.replyWithPhoto(
         { source: buffer, filename: 'image.jpg' },
-        { caption: `🖼 Готово!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}` }
+        {
+          caption: `🖼 Готово!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}`,
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('✏️ Изменить картинку', 'edit_image')],
+            [Markup.button.callback('🔄 Другой вариант', 'regen_image')]
+          ]).reply_markup
+        }
       );
     } catch (err) {
       try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
@@ -404,7 +416,37 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  if (state === 'waiting_edit') {
+  if (state === 'waiting_image_edit') {
+    userStates[userId] = null;
+    const last = userLastImage[userId];
+    if (!last) return ctx.reply('❌ Нет сохранённой картинки');
+    const msg = await ctx.reply('🎨 Изменяю картинку...');
+    try {
+      // Просим Claude объединить оригинальный промпт с изменением
+      const mergeResponse = await anthropic.messages.create({
+        model: 'claude-opus-4-6',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: `Оригинальный промпт картинки: "${last.original}"\nИзменение которое просит пользователь: "${text}"\n\nСоедини их в один улучшенный промпт на английском. Верни ТОЛЬКО промпт, без объяснений.` }]
+      });
+      const newPrompt = mergeResponse.content[0].text.trim();
+      const { buffer, enhancedPrompt } = await generateImage(newPrompt);
+      userLastImage[userId] = { original: newPrompt, enhanced: enhancedPrompt };
+      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+      await ctx.replyWithPhoto(
+        { source: buffer, filename: 'image.jpg' },
+        {
+          caption: `🖼 Изменил!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}`,
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('✏️ Изменить ещё', 'edit_image')],
+            [Markup.button.callback('🔄 Другой вариант', 'regen_image')]
+          ]).reply_markup
+        }
+      );
+    } catch (err) {
+      try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+    }
+    return;
+  }
     userStates[userId] = null;
     const msg = await ctx.reply('🎨 Вношу изменения...');
     try {
@@ -484,6 +526,38 @@ bot.action('download_html', async (ctx) => {
   ctx.answerCbQuery();
   const userId = ctx.from.id;
   if (userSites[userId]) await ctx.replyWithDocument({ source: Buffer.from(userSites[userId].html), filename: 'index.html' });
+});
+
+bot.action('edit_image', async (ctx) => {
+  ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  if (!userLastImage[userId]) return ctx.reply('❌ Нет сохранённой картинки. Сначала сгенерируй через кнопку 🖼 Картинка');
+  userStates[userId] = 'waiting_image_edit';
+  ctx.reply(`✏️ Что изменить в картинке?\n\nТекущий промпт: "${userLastImage[userId].original}"\n\nНапиши что поменять, например:\n— сделай фон белым\n— убери оружие\n— добавь корону\n— на весь экран без круга`);
+});
+
+bot.action('regen_image', async (ctx) => {
+  ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  if (!userLastImage[userId]) return ctx.reply('❌ Нет сохранённой картинки');
+  const msg = await ctx.reply('🔄 Генерирую другой вариант...');
+  try {
+    const { buffer, enhancedPrompt } = await generateImage(userLastImage[userId].original);
+    userLastImage[userId].enhanced = enhancedPrompt;
+    await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+    await ctx.replyWithPhoto(
+      { source: buffer, filename: 'image.jpg' },
+      {
+        caption: `🖼 Другой вариант!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}`,
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('✏️ Изменить картинку', 'edit_image')],
+          [Markup.button.callback('🔄 Ещё вариант', 'regen_image')]
+        ]).reply_markup
+      }
+    );
+  } catch (err) {
+    try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+  }
 });
 bot.action('another_idea', async (ctx) => {
   ctx.answerCbQuery();
