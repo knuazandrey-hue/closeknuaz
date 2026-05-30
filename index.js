@@ -8,6 +8,14 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const userSites = {};
 const userChats = {}; // История диалогов
+const userStates = {}; // Ожидание ввода
+
+// ─── Главное меню (кнопки внизу чата) ────────────────────────────────────────
+const mainMenu = Markup.keyboard([
+  ['🌐 Создать сайт', '🖼 Картинка'],
+  ['💡 Идея токена',  '💬 Задать вопрос'],
+  ['✏️ Редактировать сайт', '📥 Скачать HTML']
+]).resize();
 
 // ════════════════════════════════════════════════════════════
 // БЛОК 1: ГЕНЕРАЦИЯ КАРТИНОК
@@ -216,7 +224,7 @@ async function handleCreate(ctx, description, msg, imageBuffer=null) {
     ]));
     await ctx.replyWithDocument(
       { source: Buffer.from(html), filename: 'index.html' },
-      { caption: `☝️ Открывай в браузере!\n🔗 Онлайн (2-5 мин): https://${process.env.GITHUB_USERNAME}.github.io/${repoName}` }
+      { caption: '☝️ Открывай в браузере!' }
     );
   } catch (err) {
     console.error(err);
@@ -229,7 +237,8 @@ async function handleCreate(ctx, description, msg, imageBuffer=null) {
 // ════════════════════════════════════════════════════════════
 
 bot.start((ctx) => ctx.reply(
-  `👋 Зд! Я CloseKnuazAI — твой крипто-агент 🤖\n\nЧо умею:\n🌐 /create — сделать сайт мем-токена\n🖼 /image — сгенерить картинку по описанию\n💡 /idea — придумать идею токена\n💬 /ask — задать любой вопрос\n✏️ /edit — изменить последний сайт\n📥 /download — скачать HTML\n\nИли просто напиши мне что хочешь — разберёмся 😎`
+  `👋 Зд! Я CloseKnuazAI — твой крипто-агент 🤖\n\nЧо умею:\n🌐 Создать сайт мем-токена\n🖼 Сгенерить картинку\n💡 Придумать идею токена\n💬 Ответить на любой вопрос\n\nЖми кнопки внизу 👇`,
+  mainMenu
 ));
 
 bot.help((ctx) => ctx.reply(
@@ -299,12 +308,123 @@ bot.command('ask', async (ctx) => {
   }
 });
 
-// Обычные сообщения — как чатбот
+// Обычные сообщения — обработка кнопок меню + чатбот
 bot.on('text', async (ctx) => {
   if (ctx.message.text.startsWith('/')) return;
+  const text = ctx.message.text;
+  const userId = ctx.from.id;
+
+  // ── Кнопки главного меню ──
+  if (text === '🌐 Создать сайт') {
+    userStates[userId] = 'waiting_create';
+    return ctx.reply('✍️ Опиши свой токен!\n\nНапример: токен PEPE, зелёная лягушка, tg @pepe, twitter @pepe\n\nИли просто отправь картинку с подписью 👇');
+  }
+
+  if (text === '🖼 Картинка') {
+    userStates[userId] = 'waiting_image';
+    return ctx.reply('🖼 Что нарисовать?\n\nНапример: злой кролик в космосе, неон стиль, крипто логотип');
+  }
+
+  if (text === '💡 Идея токена') {
+    userStates[userId] = 'waiting_idea';
+    return ctx.reply('💡 Напиши тему или направление!\n\nНапример: хочу токен про котов\n\nИли напиши "рандом" — придумаю сам 🎲');
+  }
+
+  if (text === '💬 Задать вопрос') {
+    userStates[userId] = 'waiting_ask';
+    return ctx.reply('💬 Пиши свой вопрос!\n\nЗнаю всё про крипту, pump.fun, Solana, мем-токены и не только 🧠');
+  }
+
+  if (text === '✏️ Редактировать сайт') {
+    if (!userSites[userId]) return ctx.reply('❌ Сначала создай сайт кнопкой "🌐 Создать сайт"');
+    userStates[userId] = 'waiting_edit';
+    return ctx.reply('✏️ Что изменить?\n\nНапример: сделай фон темнее, добавь счётчик холдеров, измени цвет на зелёный');
+  }
+
+  if (text === '📥 Скачать HTML') {
+    if (!userSites[userId]) return ctx.reply('❌ Сначала создай сайт кнопкой "🌐 Создать сайт"');
+    return ctx.replyWithDocument({ source: Buffer.from(userSites[userId].html), filename: 'index.html' });
+  }
+
+  // ── Обработка состояний (ожидание ввода) ──
+  const state = userStates[userId];
+
+  if (state === 'waiting_create') {
+    userStates[userId] = null;
+    const msg = await ctx.reply('⏳ Начинаю...', mainMenu);
+    return handleCreate(ctx, text, msg);
+  }
+
+  if (state === 'waiting_image') {
+    userStates[userId] = null;
+    const msg = await ctx.reply('🎨 Генерирую картинку... ~30 сек');
+    try {
+      await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎨 Улучшаю промпт...');
+      const { buffer, enhancedPrompt } = await generateImage(text);
+      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+      await ctx.replyWithPhoto(
+        { source: buffer, filename: 'image.jpg' },
+        { caption: `🖼 Готово!\n\n📝 Промпт: ${enhancedPrompt.slice(0,200)}` }
+      );
+    } catch (err) {
+      try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+    }
+    return;
+  }
+
+  if (state === 'waiting_idea') {
+    userStates[userId] = null;
+    const msg = await ctx.reply('💡 Думаю...');
+    try {
+      const prompt = text.toLowerCase() === 'рандом'
+        ? 'Придумай случайную крутую идею мем-токена. Название, тикер, слоган, концепция, почему выстрелит. Неформально!'
+        : `Придумай крутую идею мем-токена на тему: "${text}". Название, тикер, слоган, концепция, почему выстрелит. Неформально!`;
+      const answer = await askClaude(prompt, userId);
+      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+      await ctx.reply(answer, Markup.inlineKeyboard([
+        [Markup.button.callback('🌐 Сделать сайт для этой идеи', 'create_from_idea')],
+        [Markup.button.callback('💡 Ещё идея', 'another_idea')]
+      ]));
+    } catch (err) {
+      try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+    }
+    return;
+  }
+
+  if (state === 'waiting_ask') {
+    userStates[userId] = null;
+    const msg = await ctx.reply('🤔 Думаю...');
+    try {
+      const answer = await askClaude(text, userId);
+      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+      await ctx.reply(answer);
+    } catch (err) {
+      try { await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id); } catch {}
+    }
+    return;
+  }
+
+  if (state === 'waiting_edit') {
+    userStates[userId] = null;
+    const msg = await ctx.reply('🎨 Вношу изменения...');
+    try {
+      const newHtml = await generateHtml({ ...userSites[userId].plan }, false, null);
+      userSites[userId].html = newHtml;
+      await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📤 Обновляю...');
+      await uploadFile(newHtml, 'index.html', userSites[userId].repoName);
+      await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
+      await ctx.reply('✅ Готово!');
+      await ctx.replyWithDocument({ source: Buffer.from(newHtml), filename: 'index.html' }, { caption: '☝️ Обновлённый сайт!' });
+    } catch (err) {
+      try { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Ошибка: ${err.message}`); } catch {}
+    }
+    return;
+  }
+
+  // ── Обычный чат ──
   const msg = await ctx.reply('🤔 Думаю...');
   try {
-    const answer = await askClaude(ctx.message.text, ctx.from.id);
+    const answer = await askClaude(text, userId);
     await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id);
     await ctx.reply(answer);
   } catch (err) {
