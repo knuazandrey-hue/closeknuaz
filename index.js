@@ -192,98 +192,18 @@ async function createDesignPlan(description) {
   }
 }
 
+const { buildSite } = require('./template');
+
 async function generateHtml(plan, hasMascot, mascotBase64 = null, progressCallback = null) {
-  const mascotHtml = hasMascot && mascotBase64
-    ? `<img src="data:image/jpeg;base64,${mascotBase64}" alt="mascot" class="mascot">`
-    : `<div class="mascot">${plan.mascotEmoji}</div>`;
-
-  const prompt = `Создай УНИКАЛЬНЫЙ одностраничный HTML сайт для мем-токена по этому плану.
-
-ПЛАН: ${JSON.stringify(plan, null, 2)}
-МАСКОТ HTML: ${mascotHtml}
-
-CSS переменные в :root:
---primary: ${plan.primaryColor}
---secondary: ${plan.secondaryColor}
---bg-start: ${plan.bgColorStart}
---bg-end: ${plan.bgColorEnd}
---glow: ${plan.glowColor}
-
-body background: linear-gradient(135deg, var(--bg-start), var(--bg-end)) — только это
-
-ОБЯЗАТЕЛЬНЫЕ @keyframes:
-float { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-20px) rotate(2deg)} }
-textGlow { 0%,100%{text-shadow:0 0 20px var(--glow)} 50%{text-shadow:0 0 60px var(--glow),0 0 100px var(--glow)} }
-fadeInUp { from{opacity:0;transform:translateY(40px)} to{opacity:1;transform:translateY(0)} }
-btnPulse { 0%,100%{box-shadow:0 0 20px var(--glow)} 50%{box-shadow:0 0 50px var(--glow),0 0 100px var(--glow)} }
-+ уникальная для этого токена (${plan.animationMood})
-
-СЕКЦИИ:
-1. NAVBAR fixed, blur фон, лого "${plan.mascotEmoji} $${plan.ticker}", кнопка Buy
-2. HERO 100vh: ${mascotHtml} с float 3s infinite, h1 gradient, typewriter слоган, 3 кнопки, CA copy
-3. STATS 3 glassmorphism карточки, счётчики JS на setTimeout
-4. ABOUT 3 карточки: ${plan.aboutPoints.map(p => p.icon + ' ' + p.title).join(', ')}
-5. TOKENOMICS conic-gradient диаграмма + список
-6. ROADMAP таймлайн: ${plan.roadmap.map(r => r.phase + '[' + r.status + ']').join(', ')}
-7. HOW TO BUY 4 шага
-8. GAME кликер — клик по маскоту = +1 токен, анимация "+1", уровни
-9. COMMUNITY Twitter, Telegram, Pump.fun
-10. FOOTER дисклеймер
-
-JS: Canvas частицы, typewriter, счётчики, кликер, copy CA
-УНИКАЛЬНАЯ ФИЧА: ${plan.uniqueFeature}
-
-СТРОГО: весь контент видим сразу (NO opacity:0 на секциях!), один файл.
-Верни ТОЛЬКО HTML начиная с <!DOCTYPE html>. Без \`\`\`.`;
-
-  // Стриминг — соединение не рвётся пока Claude пишет
-  let html = '';
-  let chunkCount = 0;
-
-  const stream = anthropic.messages.stream({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8000,
-    messages: [{ role: 'user', content: prompt }]
-  });
-
-  stream.on('text', (text) => {
-    html += text;
-    chunkCount++;
-    // Обновляем прогресс каждые 60 чанков (~30 сек)
-    if (progressCallback && chunkCount % 60 === 0) {
-      const lines = html.split('\n').length;
-      progressCallback(lines).catch(() => {});
-    }
-  });
-
-  await stream.finalMessage();
-
-  html = html.replace(/```html/gi, '').replace(/```/g, '').trim();
-  if (!html.startsWith('<!')) html = '<!DOCTYPE html>\n' + html;
-  if (!html.includes('</html>')) html += '\n</body></html>';
-
-  // Инъекция скрипта который исправляет любой opacity:0 на секциях
-  const fixScript = `
-<script>
-window.addEventListener('load', function() {
-  // Принудительно показываем весь контент
-  var tags = ['section','div','header','footer','nav','main','article','h1','h2','h3','p','a','button','img'];
-  tags.forEach(function(tag) {
-    document.querySelectorAll(tag).forEach(function(el) {
-      var style = window.getComputedStyle(el);
-      if (style.opacity === '0' || style.visibility === 'hidden' || style.display === 'none') {
-        if (!el.classList.contains('particle') && !el.id.includes('particle')) {
-          el.style.opacity = '1';
-          el.style.visibility = 'visible';
-        }
-      }
-    });
-  });
-});
-</script>`;
-
-  html = html.replace('</body>', fixScript + '\n</body>');
-  return html;
+  // Используем готовый шаблон — всегда работает, всегда отображается
+  if (progressCallback) {
+    await progressCallback(200).catch(() => {});
+    await new Promise(r => setTimeout(r, 1000));
+    await progressCallback(400).catch(() => {});
+    await new Promise(r => setTimeout(r, 1000));
+    await progressCallback(600).catch(() => {});
+  }
+  return buildSite(plan, hasMascot ? mascotBase64 : null);
 }
 
 async function ensureRepo(repoName) {
